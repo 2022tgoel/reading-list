@@ -119,8 +119,8 @@ def get_user_tweets(
                 max_results=100,
                 start_time=since.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 pagination_token=pagination_token,
-                tweet_fields=["created_at", "author_id", "entities"],
-                expansions=["author_id"],
+                tweet_fields=["created_at", "author_id", "entities", "referenced_tweets"],
+                expansions=["author_id", "referenced_tweets.id", "referenced_tweets.id.author_id"],
                 user_fields=["name", "username"],
             )
         except tweepy.TooManyRequests:
@@ -133,13 +133,30 @@ def get_user_tweets(
         if not resp.data:
             break
 
+        # Build lookup for referenced (retweeted/quoted) tweets
+        ref_tweets_by_id: dict[str, tweepy.Tweet] = {}
+        if resp.includes and "tweets" in resp.includes:
+            for rt in resp.includes["tweets"]:
+                ref_tweets_by_id[str(rt.id)] = rt
+
         for tweet in resp.data:
+            # Collect URLs from the tweet itself
             expanded_urls: list[str] = []
             entities = tweet.data.get("entities", {})
             for url_entity in entities.get("urls", []):
                 expanded = url_entity.get("expanded_url") or url_entity.get("url", "")
                 if expanded:
                     expanded_urls.append(expanded)
+
+            # For retweets/quotes, also collect URLs from the original tweet
+            for ref in (tweet.data.get("referenced_tweets") or []):
+                ref_tweet = ref_tweets_by_id.get(str(ref["id"]))
+                if ref_tweet:
+                    ref_entities = ref_tweet.data.get("entities", {})
+                    for url_entity in ref_entities.get("urls", []):
+                        expanded = url_entity.get("expanded_url") or url_entity.get("url", "")
+                        if expanded:
+                            expanded_urls.append(expanded)
 
             results.append(
                 RawTweet(
