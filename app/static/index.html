@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paper Reading List</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: { 50: '#f8f7f4', 100: '#f0ede6', 200: '#ddd8ca', 300: '#c5bda8', 400: '#a99e83', 500: '#918565', 600: '#7d7154', 700: '#665c45', 800: '#554d3b', 900: '#484234', 950: '#28241c' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .spinner { border: 3px solid #e5e7eb; border-top: 3px solid #6366f1; border-radius: 50%; width: 20px; height: 20px; animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="h-full bg-ink-50 text-ink-900">
+  <div id="app" class="flex flex-col h-full">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-ink-200 px-6 py-4 flex items-center justify-between shrink-0">
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight">Paper Reading List</h1>
+        <p id="stats-line" class="text-sm text-ink-500 mt-0.5"></p>
+      </div>
+      <button id="refresh-btn" onclick="refreshPapers()"
+        class="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+        <svg id="refresh-icon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+        <span id="refresh-text">Refresh</span>
+      </button>
+    </header>
+
+    <!-- Toolbar -->
+    <div class="bg-white border-b border-ink-200 px-6 py-3 flex flex-wrap items-center gap-3 shrink-0">
+      <div class="flex rounded-lg border border-ink-200 overflow-hidden text-sm">
+        <button onclick="setFilter('all')" data-filter="all" class="filter-btn px-3 py-1.5 font-medium">All</button>
+        <button onclick="setFilter('unread')" data-filter="unread" class="filter-btn px-3 py-1.5 border-l border-ink-200 font-medium">Unread</button>
+        <button onclick="setFilter('bookmarked')" data-filter="bookmarked" class="filter-btn px-3 py-1.5 border-l border-ink-200 font-medium">Bookmarked</button>
+      </div>
+      <div class="flex rounded-lg border border-ink-200 overflow-hidden text-sm">
+        <button onclick="setSort('recent')" data-sort="recent" class="sort-btn px-3 py-1.5 font-medium">Recent</button>
+        <button onclick="setSort('popular')" data-sort="popular" class="sort-btn px-3 py-1.5 border-l border-ink-200 font-medium">Popular</button>
+      </div>
+      <div class="flex-1 min-w-[200px] max-w-md">
+        <input id="search-input" type="text" placeholder="Search papers..."
+          class="w-full px-3 py-1.5 text-sm border border-ink-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+      </div>
+    </div>
+
+    <!-- Content -->
+    <main class="flex-1 overflow-y-auto px-6 py-6">
+      <div id="papers-list" class="max-w-4xl mx-auto space-y-4"></div>
+      <div id="empty-state" class="hidden max-w-md mx-auto text-center py-20">
+        <svg class="mx-auto h-12 w-12 text-ink-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+        <h3 class="mt-4 text-lg font-medium text-ink-700">No papers yet</h3>
+        <p class="mt-1 text-sm text-ink-500">Click <strong>Refresh</strong> to fetch papers from your Twitter timeline.</p>
+      </div>
+      <div id="loading-state" class="hidden max-w-md mx-auto text-center py-20">
+        <div class="spinner mx-auto"></div>
+        <p class="mt-4 text-sm text-ink-500">Loading papers...</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-ink-900 text-white px-4 py-2.5 rounded-lg shadow-lg text-sm transition-all duration-300 opacity-0 translate-y-2 pointer-events-none"></div>
+
+  <script>
+    let currentFilter = 'all';
+    let currentSort = 'recent';
+    let searchTimeout = null;
+
+    // ---- API helpers ----
+
+    async function api(path, opts = {}) {
+      const res = await fetch(`/api${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      });
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res.json();
+    }
+
+    // ---- Toast ----
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.remove('opacity-0', 'translate-y-2');
+      t.classList.add('opacity-100', 'translate-y-0');
+      setTimeout(() => {
+        t.classList.remove('opacity-100', 'translate-y-0');
+        t.classList.add('opacity-0', 'translate-y-2');
+      }, 3000);
+    }
+
+    // ---- Render ----
+
+    function renderPapers(papers) {
+      const list = document.getElementById('papers-list');
+      const empty = document.getElementById('empty-state');
+      const loading = document.getElementById('loading-state');
+
+      loading.classList.add('hidden');
+
+      if (!papers.length) {
+        list.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+
+      empty.classList.add('hidden');
+      list.innerHTML = papers.map(p => paperCard(p)).join('');
+    }
+
+    function paperCard(p) {
+      const abstract = p.abstract
+        ? (p.abstract.length > 300 ? p.abstract.slice(0, 300) + '...' : p.abstract)
+        : '';
+      const authors = p.authors
+        ? (p.authors.length > 120 ? p.authors.slice(0, 120) + '...' : p.authors)
+        : '';
+      const tweetBadge = p.tweet_count > 1
+        ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded-full">${p.tweet_count} tweets</span>`
+        : '';
+      const sourceBadge = `<span class="px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-full">${p.source}</span>`;
+      const yearBadge = p.year ? `<span class="px-2 py-0.5 text-xs font-medium bg-ink-100 text-ink-600 rounded-full">${p.year}</span>` : '';
+      const venueBadge = p.venue ? `<span class="px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-full">${p.venue}</span>` : '';
+
+      const readClass = p.is_read ? 'bg-ink-100 text-ink-500' : 'bg-white';
+      const readBtn = p.is_read
+        ? `<button onclick="toggleRead(${p.id}, false)" class="text-xs text-ink-400 hover:text-ink-600 transition">Mark unread</button>`
+        : `<button onclick="toggleRead(${p.id}, true)" class="text-xs text-indigo-600 hover:text-indigo-800 transition">Mark read</button>`;
+      const bookmarkBtn = p.is_bookmarked
+        ? `<button onclick="toggleBookmark(${p.id}, false)" class="text-xs text-amber-600 hover:text-amber-800 transition flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z"/></svg>Bookmarked</button>`
+        : `<button onclick="toggleBookmark(${p.id}, true)" class="text-xs text-ink-400 hover:text-amber-600 transition flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 20 20"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z"/></svg>Bookmark</button>`;
+
+      const tweetsHtml = (p.tweets || []).map(t => `
+        <div class="flex items-start gap-2 text-xs text-ink-500 mt-1">
+          <span class="font-medium text-ink-600 shrink-0">@${escHtml(t.author_handle)}</span>
+          <span class="truncate">${escHtml(t.text.slice(0, 140))}</span>
+          <a href="${escHtml(t.url)}" target="_blank" rel="noopener" class="shrink-0 text-indigo-500 hover:underline">tweet</a>
+        </div>
+      `).join('');
+
+      return `
+        <article class="fade-in ${readClass} rounded-xl border border-ink-200 shadow-sm hover:shadow-md transition p-5" data-id="${p.id}">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2 mb-1">
+                ${sourceBadge}${yearBadge}${venueBadge}${tweetBadge}
+              </div>
+              <h2 class="font-semibold text-base leading-snug ${p.is_read ? 'text-ink-500' : 'text-ink-900'}">
+                <a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="hover:text-indigo-700 transition">${escHtml(p.title)}</a>
+              </h2>
+              ${authors ? `<p class="text-sm text-ink-500 mt-1">${escHtml(authors)}</p>` : ''}
+              ${abstract ? `<p class="text-sm text-ink-600 mt-2 leading-relaxed">${escHtml(abstract)}</p>` : ''}
+            </div>
+          </div>
+          <div class="mt-3 flex items-center gap-4">
+            ${readBtn}
+            ${bookmarkBtn}
+          </div>
+          ${p.tweets && p.tweets.length ? `<details class="mt-3"><summary class="text-xs text-ink-400 cursor-pointer hover:text-ink-600">Source tweets (${p.tweets.length})</summary><div class="mt-2 space-y-1 pl-2 border-l-2 border-ink-200">${tweetsHtml}</div></details>` : ''}
+        </article>
+      `;
+    }
+
+    function escHtml(s) {
+      const el = document.createElement('span');
+      el.textContent = s || '';
+      return el.innerHTML;
+    }
+
+    // ---- Filters / sort ----
+
+    function setFilter(f) {
+      currentFilter = f;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('bg-indigo-600', btn.dataset.filter === f);
+        btn.classList.toggle('text-white', btn.dataset.filter === f);
+        btn.classList.toggle('text-ink-600', btn.dataset.filter !== f);
+      });
+      loadPapers();
+    }
+
+    function setSort(s) {
+      currentSort = s;
+      document.querySelectorAll('.sort-btn').forEach(btn => {
+        btn.classList.toggle('bg-indigo-600', btn.dataset.sort === s);
+        btn.classList.toggle('text-white', btn.dataset.sort === s);
+        btn.classList.toggle('text-ink-600', btn.dataset.sort !== s);
+      });
+      loadPapers();
+    }
+
+    document.getElementById('search-input').addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => loadPapers(), 300);
+    });
+
+    // ---- Data loading ----
+
+    async function loadPapers() {
+      const search = document.getElementById('search-input').value;
+      const params = new URLSearchParams({ filter: currentFilter, sort: currentSort });
+      if (search) params.set('search', search);
+      try {
+        const papers = await api(`/papers?${params}`);
+        renderPapers(papers);
+      } catch (err) {
+        showToast('Failed to load papers');
+        console.error(err);
+      }
+    }
+
+    async function loadStats() {
+      try {
+        const s = await api('/stats');
+        const line = `${s.total} papers \u00b7 ${s.unread} unread \u00b7 ${s.bookmarked} bookmarked`;
+        document.getElementById('stats-line').textContent = line;
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // ---- Actions ----
+
+    async function toggleRead(id, val) {
+      try {
+        await api(`/papers/${id}`, { method: 'PATCH', body: JSON.stringify({ is_read: val }) });
+        loadPapers();
+        loadStats();
+      } catch (err) { showToast('Failed to update paper'); }
+    }
+
+    async function toggleBookmark(id, val) {
+      try {
+        await api(`/papers/${id}`, { method: 'PATCH', body: JSON.stringify({ is_bookmarked: val }) });
+        loadPapers();
+        loadStats();
+      } catch (err) { showToast('Failed to update paper'); }
+    }
+
+    async function refreshPapers() {
+      const btn = document.getElementById('refresh-btn');
+      const text = document.getElementById('refresh-text');
+      const icon = document.getElementById('refresh-icon');
+      btn.disabled = true;
+      text.textContent = 'Scanning follows...';
+      icon.classList.add('animate-spin');
+
+      try {
+        const result = await api('/refresh', { method: 'POST' });
+        showToast(`${result.tweets_fetched} tweets scanned, ${result.tweets_with_links} had paper links, ${result.new_papers} new papers found`);
+        loadPapers();
+        loadStats();
+      } catch (err) {
+        showToast('Refresh failed \u2014 check your API token');
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        text.textContent = 'Refresh';
+        icon.classList.remove('animate-spin');
+      }
+    }
+
+    // ---- Init ----
+    setFilter('all');
+    setSort('recent');
+    loadStats();
+    loadPapers();
+  </script>
+</body>
+</html>
